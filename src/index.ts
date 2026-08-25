@@ -2083,25 +2083,31 @@ export default function (pi: ExtensionAPI) {
 		});
 	} else {
 		// Subsequent instance (subagent session). Some subagent extensions
-		// (e.g. @gotgenes/pi-subagents) build the child session with its own
-		// resourceLoader.reload(), which rebuilds the provider registry from
-		// config + auth and drops our *runtime* registration. Skipping entirely
-		// then leaves the child unable to resolve claude-bridge models
-		// ("No API key found for claude-bridge").
+		// (e.g. @gotgenes/pi-subagents) build the child as an INDEPENDENT session
+		// with its own resourceLoader.reload(), which rebuilds the provider registry
+		// from config + auth and drops our *runtime* registration. Skipping entirely
+		// leaves the child unable to resolve claude-bridge ("No API key found for
+		// claude-bridge").
 		//
-		// Re-register the provider entry so the child's registry can resolve it,
-		// but route streaming through the PARENT's streamSimple (the instance that
-		// owns the live QueryContext state) rather than this child instance's
-		// empty-state function — matching the reentrant design documented above.
+		// Re-register with THIS child instance's own streamSimple — not the
+		// parent's. The child is a separate session: its own before_agent_start
+		// populates *this* instance's promptCaptures, so it must stream through
+		// *this* instance's function, or the resolver finds no capture for the
+		// child's system prompt ("prompt-capture: no capture ...") and drops the
+		// turn's context files / skills / custom instructions. Safe because the
+		// child's rebuilt registry is separate from the parent's, so this does not
+		// overwrite the parent's registration or its streamSimple; the child's
+		// session_shutdown also won't clear ACTIVE_STREAM_SIMPLE_KEY (it holds the
+		// parent's fn, not this one).
 		pi.registerProvider(PROVIDER_ID, {
 			baseUrl: "claude-bridge",
 			apiKey: "not-used",
 			api: "claude-bridge",
 			models: registeredModels,
 			// Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
-			streamSimple: g[ACTIVE_STREAM_SIMPLE_KEY] as any,
+			streamSimple: streamClaudeAgentSdk as any,
 		});
-		debug(`provider: re-registered for child session, routing via parent streamSimple (module=${moduleInstanceId})`);
+		debug(`provider: re-registered for independent child session with own streamSimple (module=${moduleInstanceId})`);
 	}
 
 	// --- AskClaude tool ---
