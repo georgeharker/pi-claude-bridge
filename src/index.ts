@@ -2082,11 +2082,26 @@ export default function (pi: ExtensionAPI) {
 			streamSimple: streamClaudeAgentSdk as any,
 		});
 	} else {
-		// Subsequent instance (subagent session): skip registration entirely.
-		// The subagent already has access to claude-bridge models via the shared
-		// ModelRegistry from the parent's registration. Calls to those models
-		// route through the parent's streamSimple via reentrant QueryContexts.
-		debug(`provider: skipping re-registration, parent instance active (module=${moduleInstanceId})`);
+		// Subsequent instance (subagent session). Some subagent extensions
+		// (e.g. @gotgenes/pi-subagents) build the child session with its own
+		// resourceLoader.reload(), which rebuilds the provider registry from
+		// config + auth and drops our *runtime* registration. Skipping entirely
+		// then leaves the child unable to resolve claude-bridge models
+		// ("No API key found for claude-bridge").
+		//
+		// Re-register the provider entry so the child's registry can resolve it,
+		// but route streaming through the PARENT's streamSimple (the instance that
+		// owns the live QueryContext state) rather than this child instance's
+		// empty-state function — matching the reentrant design documented above.
+		pi.registerProvider(PROVIDER_ID, {
+			baseUrl: "claude-bridge",
+			apiKey: "not-used",
+			api: "claude-bridge",
+			models: registeredModels,
+			// Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
+			streamSimple: g[ACTIVE_STREAM_SIMPLE_KEY] as any,
+		});
+		debug(`provider: re-registered for child session, routing via parent streamSimple (module=${moduleInstanceId})`);
 	}
 
 	// --- AskClaude tool ---
